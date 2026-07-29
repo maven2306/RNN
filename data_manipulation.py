@@ -50,9 +50,9 @@ train_data.loc[mask, "x"] = 120 - train_data.loc[mask, "x"]
 train_data.loc[mask, "ball_land_x"] = 120 - train_data.loc[mask, "ball_land_x"]
 train_data.loc[mask, 'absolute_yardline_number'] = 100 - train_data.loc[mask, 'absolute_yardline_number']
 
-# As 0 = east, 90 = north, 180 = west, 270 = south, we want to mirror degrees vertically (on a right-to-left play, a player facing north-west (160) would point north-east (20) on a left-to-right play)
-train_data.loc[mask, "dir"] = (180 - train_data.loc[mask, "dir"]) % 360
-train_data.loc[mask, "o"] = (180 - train_data.loc[mask, "o"]) % 360
+# As 0 = north, 270 = east, 180 = south, 90 = west (all verified empirically), we want to mirror degrees vertically (on a right-to-left play, a player facing north-west (160) would point north-east (20) on a left-to-right play)
+train_data.loc[mask, "dir"] = (360 - train_data.loc[mask, "dir"]) % 360
+train_data.loc[mask, "o"] = (360 - train_data.loc[mask, "o"]) % 360
 
 
 # 360 = 0, but for NN is it not given. Circular variables are more complex to handle. Instead, we can use sin(theta) and cos(theta): sin(360) = sin(0), etc. 
@@ -169,7 +169,7 @@ def build_dataset(input_df, output_df):
     dataset = dataset.padded_batch(
         batch_size=32,
         padded_shapes=([None, n_features], [None, 2]),
-        padding_values=(999, 999)
+        padding_values=(999.0, 999.0)
     )
 
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
@@ -189,42 +189,37 @@ test_output_df = output_data[output_data["game_id"].isin(test_games)]
 
 # Let's first normalise and scale to 0 mean and 1 SD. We must use the same mean and std from the training split: any scaled value is dependent on the mean and std; 
 # if birth_year(e.g. 1999) - mean = 0.34 and we train the model on that, if we scale the test data using a different mean, then 1999 - mean != 0.34! Same birth year, different coefficients. 
-cols_to_normalize = ['absolute_yardline_number', 'player_height', 'player_weight', 'player_birth_year', 'x', 'y', 's', 'a',
-                     'ball_land_x', 'ball_land_y']
 
-mean = train_input_df.loc[:, cols_to_normalize].mean(axis=0)
-std = train_input_df.loc[:, cols_to_normalize].std(axis=0)
-train_input_df.loc[:, cols_to_normalize] = (train_input_df.loc[:, cols_to_normalize] - mean) / std
-val_input_df.loc[:, cols_to_normalize] = (val_input_df.loc[:, cols_to_normalize] - mean) / std
-test_input_df.loc[:, cols_to_normalize] = (test_input_df.loc[:, cols_to_normalize] - mean) / std
-
-
-cols_to_normalize = ['x', 'y']
-
-train_output_df.loc[:, cols_to_normalize] = (train_output_df.loc[:, cols_to_normalize] - mean) / std
-val_output_df.loc[:, cols_to_normalize] = (val_output_df.loc[:, cols_to_normalize] - mean) / std
-test_output_df.loc[:, cols_to_normalize] = (test_output_df.loc[:, cols_to_normalize] - mean) / std
-
-
-"""
-I think this is equivalent to: 
 
 from sklearn.preprocessing import StandardScaler
 
-# Fit scaler on training input only
-input_scaler = StandardScaler()
-input_scaler.fit(train_input_df[scale_cols])
+cols_to_scale = ['absolute_yardline_number', 'player_height', 'player_weight', 'player_birth_year', 's', 'a',
+                     'ball_land_x', 'ball_land_y']
 
-# Transform all three splits with the SAME scaler
-train_input_df[scale_cols] = input_scaler.transform(train_input_df[scale_cols])
-val_input_df[scale_cols]   = input_scaler.transform(val_input_df[scale_cols])
-test_input_df[scale_cols]  = input_scaler.transform(test_input_df[scale_cols])
+scaler = StandardScaler()
 
-etc
+scaler.fit(train_input_df[cols_to_scale]) # without x and y 
+
+train_input_df[cols_to_scale] = scaler.transform(train_input_df[cols_to_scale])
+val_input_df[cols_to_scale]   = scaler.transform(val_input_df[cols_to_scale])
+test_input_df[cols_to_scale]  = scaler.transform(test_input_df[cols_to_scale])
+
+cols_to_scale = ['x', 'y']
+
+scaler_coords = StandardScaler()
+
+scaler_coords.fit(train_input_df[cols_to_scale]) # A scaler just for x and y, as it must be applied, the same scaler, to both input and output datasets
+
+train_input_df[cols_to_scale] = scaler_coords.transform(train_input_df[cols_to_scale])
+val_input_df[cols_to_scale]   = scaler_coords.transform(val_input_df[cols_to_scale])
+test_input_df[cols_to_scale]  = scaler_coords.transform(test_input_df[cols_to_scale])
+
+train_output_df[cols_to_scale] = scaler_coords.transform(train_output_df[cols_to_scale])
+val_output_df[cols_to_scale] = scaler_coords.transform(val_output_df[cols_to_scale])
+test_output_df[cols_to_scale] = scaler_coords.transform(test_output_df[cols_to_scale])
 
 # NB: I will need output_scaler.inverse_transform(predictions) to transform back the predictions and get the RMSD in yards. 
 
-"""
 
 
 train_dataset = build_dataset(train_input_df, train_output_df)
