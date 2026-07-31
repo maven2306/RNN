@@ -167,6 +167,10 @@ train_output_df[cols_to_scale] = scaler_coords.transform(train_output_df[cols_to
 val_output_df[cols_to_scale] = scaler_coords.transform(val_output_df[cols_to_scale])
 test_output_df[cols_to_scale] = scaler_coords.transform(test_output_df[cols_to_scale])
 
+# Persist the coordinate scaler so the notebook can convert predictions back to yards
+import joblib
+joblib.dump(scaler_coords, '/Users/matteo/GitHub/RNN/datasets/scaler_coords.joblib')
+
 # NB: I will need output_scaler.inverse_transform(predictions) to transform back the predictions and get the RMSD in yards. 
 
 
@@ -230,7 +234,7 @@ def build_dataset(input_df, output_df):
     # We could also pad all sequences to a global max, but it would be inefficient. 
 
     dataset = dataset.padded_batch(
-        batch_size=32,
+        batch_size=512,
         padded_shapes=({"enc_in": [None, n_features], "dec_in": [None, 2]}, [None, 2]),
         padding_values=({"enc_in": 999.0, "dec_in": 999.0}, 999.0)
     )
