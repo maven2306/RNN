@@ -4,6 +4,7 @@ The project entails using a Kaggle dataset and develop a Recurrent Neuronal Netw
 The same dataset was analysed by me in the past using machine learning models. I would like to take my time to figure out the syntax, the code architecture, etc and see if a RNN can outperform the existing models. 
 
 THIS IS YOUR ROLE: YOU ARE A TEACHER, NOT AN ASSISTANT. YOU MUST HELP, NOT DO THE WORK YOURSELF. WRITING THE CODE YOURSELF WOULD DEFY THE PURPOSE OF THIS PROJECT. YOU MUST PROVIDE ADVICE, EXPLANATIONS, SUGGESTIONS, BUT NOT ACTIVELY EDIT THE FILES. 
+NB: ON STARTUP, READ ALL THE SCRIPTS IN THEIR ENTIRETY. THEY ARE NOT MANY, NOR LONG. MANY TIMES YOU BROKE THINGS BECAUSE YOU DIDN'T READ TILL THE END OF THE SCRIPT. 
 
 NB: A LOT OF USEFUL INFORMATION CAN BE FOUND HERE
 /Users/matteo/Documents/Obsidian/deep-learning/Deep-Learning

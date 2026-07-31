@@ -125,66 +125,6 @@ val_games   = unique_games[train_end:val_end]
 test_games  = unique_games[val_end:]
 
 
-# ---------- Now we're ready to create the tensors 
-
-
-## We remove these columns from the input dataframes. In the output dataframes we only keep x and y so no columns have to be explicitly dropped 
-cols_to_remove = ["game_id", "play_id", "nfl_id", "frame_id", 'play_direction', 'player_side',
-                  'player_to_predict', 'num_frames_output', 'player_name', 'dir', 'o']
-
-feature_cols = [c for c in train_data.columns if c not in cols_to_remove]
-n_features = len(feature_cols)
-
-def build_dataset(input_df, output_df):
-    # This creates for every instance a dataframe. A groupby object is a dictionary where the key is one instance (nfl_id-play_id-game_id) and the value 
-    # are the rows of that instance. 
-    input_groups = input_df.groupby(["game_id", "play_id", "nfl_id"])
-    output_groups = output_df.groupby(["game_id", "play_id", "nfl_id"])
-
-    input_sequences = []
-    output_sequences = []
-    keys = []
-
-    for key, grp in input_groups:
-        grp = grp.sort_values("frame_id")
-        input_sequences.append(grp[feature_cols].values.astype("float32"))
-        keys.append(key)
-
-    for key in keys:
-        if key in output_groups.groups:
-            grp = output_groups.get_group(key).sort_values("frame_id")
-            output_sequences.append(grp[["x", "y"]].values.astype("float32")) # Here we keep only x and y from the output sequences 
-        else:
-            raise KeyError(f'{key} has no output data')
-        
-    # return one input sequence and one output sequence at time with yield 
-    def gen():
-        for inp, out in zip(input_sequences, output_sequences):
-            yield inp, out
-
-
-   
-    dataset = tf.data.Dataset.from_generator(
-        gen,                         # the generator function
-        output_signature=(           # promise about what each yield looks like
-            tf.TensorSpec(shape=(None, n_features), dtype=tf.float32), # n_features is the number of columns in the input sequences; None means: each tensor can have a variable length (different input frames number)
-            tf.TensorSpec(shape=(None, 2), dtype=tf.float32), # 2 is the number of columns in the output sequences; None means: each tensor can have a variable length (different output frames number)
-        )
-)
-    # Now we batch the tensors and pad them: each batch has tensors of the same shape. Mind that different batches have different sizes: each batch has max_input_frame_id (because of None) 
-    # as the input tensor, and max_output_frame_id (because of None) as the output tensor. 
-    # We could also pad all sequences to a global max, but it would be inefficient. 
-
-    dataset = dataset.padded_batch(
-        batch_size=32,
-        padded_shapes=([None, n_features], [None, 2]),
-        padding_values=(999.0, 999.0)
-    )
-
-    dataset = dataset.prefetch(tf.data.AUTOTUNE)
-
-    return dataset 
-
 
 train_input_df = train_data[train_data["game_id"].isin(train_games)]
 train_output_df = output_data[output_data["game_id"].isin(train_games)]
@@ -230,6 +170,74 @@ test_output_df[cols_to_scale] = scaler_coords.transform(test_output_df[cols_to_s
 # NB: I will need output_scaler.inverse_transform(predictions) to transform back the predictions and get the RMSD in yards. 
 
 
+# ---------- Now we're ready to create the tensors 
+
+
+## We remove these columns from the input dataframes. In the output dataframes we only keep x and y so no columns have to be explicitly dropped 
+cols_to_remove = ["game_id", "play_id", "nfl_id", "frame_id", 'play_direction', 'player_side',
+                  'player_to_predict', 'num_frames_output', 'player_name', 'dir', 'o']
+
+feature_cols = [c for c in train_data.columns if c not in cols_to_remove]
+n_features = len(feature_cols)
+
+
+
+def build_dataset(input_df, output_df):
+    # This creates for every instance a dataframe. A groupby object is a dictionary where the key is one instance (nfl_id-play_id-game_id) and the value 
+    # are the rows of that instance. 
+    input_groups = input_df.groupby(["game_id", "play_id", "nfl_id"])
+    output_groups = output_df.groupby(["game_id", "play_id", "nfl_id"])
+
+    input_sequences = []
+    output_sequences = []
+    keys = []
+
+    for key, grp in input_groups:
+        grp = grp.sort_values("frame_id")
+        input_sequences.append(grp[feature_cols].values.astype("float32"))
+        keys.append(key)
+
+    for key in keys:
+        if key in output_groups.groups:
+            grp = output_groups.get_group(key).sort_values("frame_id")
+            output_sequences.append(grp[["x", "y"]].values.astype("float32")) # Here we keep only x and y from the output sequences 
+        else:
+            raise KeyError(f'{key} has no output data')
+        
+    # return one input sequence and one output sequence at time with yield 
+    def gen():
+        for inp, out in zip(input_sequences, output_sequences):
+            yield inp, out
+
+    def shift_target(x, y):
+        start = tf.zeros((1, 2), dtype=tf.float32)
+        dec_in = tf.concat([start, y[:-1]], axis=0)
+        return {"enc_in": x, "dec_in": dec_in}, y   
+
+    
+    dataset = tf.data.Dataset.from_generator(
+        gen,                         # the generator function
+        output_signature=(           # promise about what each yield looks like
+            tf.TensorSpec(shape=(None, n_features), dtype=tf.float32), # n_features is the number of columns in the input sequences; None means: each tensor can have a variable length (different input frames number)
+            tf.TensorSpec(shape=(None, 2), dtype=tf.float32), # 2 is the number of columns in the output sequences; None means: each tensor can have a variable length (different output frames number)
+        )
+)    
+
+    dataset = dataset.map(shift_target)
+    
+    # Now we batch the tensors and pad them: each batch has tensors of the same shape. Mind that different batches have different sizes: each batch has max_input_frame_id (because of None) 
+    # as the input tensor, and max_output_frame_id (because of None) as the output tensor. 
+    # We could also pad all sequences to a global max, but it would be inefficient. 
+
+    dataset = dataset.padded_batch(
+        batch_size=32,
+        padded_shapes=({"enc_in": [None, n_features], "dec_in": [None, 2]}, [None, 2]),
+        padding_values=({"enc_in": 999.0, "dec_in": 999.0}, 999.0)
+    )
+
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
+
+    return dataset 
 
 train_dataset = build_dataset(train_input_df, train_output_df)
 val_dataset   = build_dataset(val_input_df, val_output_df)
@@ -383,15 +391,20 @@ train_loaded = tf.data.Dataset.load('/Users/matteo/GitHub/RNN/datasets/train')
 in_lengths = train_input_df.groupby(["game_id", "play_id", "nfl_id"]).size().tolist()
 out_lengths = train_output_df.groupby(["game_id", "play_id", "nfl_id"]).size().tolist()
 
-for b_idx, (batch_in, batch_out) in enumerate(train_loaded.take(1)):
-    assert batch_in.shape[2] == n_features, "Input feature dimension wrong"
+for b_idx, (batch, batch_out) in enumerate(train_loaded.take(1)):
+    batch_enc = batch["enc_in"]
+    batch_dec = batch["dec_in"]
+    assert batch_enc.shape[2] == n_features, "Input feature dimension wrong"
+    assert batch_dec.shape[2] == 2, "Decoder input dimension wrong"
     assert batch_out.shape[2] == 2, "Output dimension wrong"
-    for i in range(batch_in.shape[0]):
+    for i in range(batch_enc.shape[0]):
         idx = b_idx * 32 + i
         if idx >= len(in_lengths):
             break
-        if in_lengths[idx] < batch_in.shape[1]:
-            assert (batch_in[i, in_lengths[idx]:, :] == 999.0).numpy().all(), "Input padding not 999.0"
+        if in_lengths[idx] < batch_enc.shape[1]:
+            assert (batch_enc[i, in_lengths[idx]:, :] == 999.0).numpy().all(), "Input padding not 999.0"
+        if out_lengths[idx] < batch_dec.shape[1]:
+            assert (batch_dec[i, out_lengths[idx]:, :] == 999.0).numpy().all(), "Decoder input padding not 999.0"
         if out_lengths[idx] < batch_out.shape[1]:
             assert (batch_out[i, out_lengths[idx]:, :] == 999.0).numpy().all(), "Output padding not 999.0"
 
